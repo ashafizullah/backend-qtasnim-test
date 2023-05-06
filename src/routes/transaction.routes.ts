@@ -6,6 +6,7 @@ import {
   findAllTransaction,
   findTransaction,
   updateTransaction,
+	getMostSoldProductByProductTypeId
 } from '../controllers/transaction.controller';
 import { createTransactionSchema, updateTransactionSchema } from '../schemas/transaction.schema';
 
@@ -17,5 +18,8 @@ router
   .get(findTransaction)
   .put(validate(updateTransactionSchema), updateTransaction)
   .delete(deleteTransaction);
+router
+	.route('/:productTypeId/most-sold-product')
+	.get(getMostSoldProductByProductTypeId);
 
 export default router;

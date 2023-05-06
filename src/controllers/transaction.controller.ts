@@ -301,3 +301,40 @@ export const deleteTransaction = async (req: Request<ParamsInput>, res: Response
     });
   }
 };
+
+export const getMostSoldProductByProductTypeId = async (req: Request<ParamsInput>, res: Response) => {
+  try {
+    const transactions = await TransactionModel.findAll({
+      include: [
+        {
+          model: ProductModel,
+          as: 'product',
+          where: { productTypeId: req.params.productTypeId },
+        },
+      ],
+    });
+
+		const mostSoldProduct = transactions.reduce((acc: any, curr: any) => {
+			const found = acc.find((item: any) => item.productId == curr.productId);
+			if (found) {
+				found.amountSold += curr.amountSold;
+			} else {
+				acc.push(curr);
+			}
+			return acc;
+		}
+		, []);
+
+		const sortedMostSoldProduct = mostSoldProduct.sort((a: any, b: any) => b.amountSold - a.amountSold);
+
+		res.status(200).json({
+			status: 'success',
+			data: sortedMostSoldProduct,
+		});
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'failed',
+      message: error.message,
+    });
+  }
+};

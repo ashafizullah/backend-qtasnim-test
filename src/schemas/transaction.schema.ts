@@ -12,6 +12,7 @@ export const createTransactionSchema = z.object({
 
 export const params = z.object({
   transactionId: z.string(),
+  productTypeId: z.string().optional(),
 });
 
 export const updateTransactionSchema = z.object({
