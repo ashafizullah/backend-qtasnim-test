@@ -1,5 +1,4 @@
-# Backend - Qtasnim Test - Adam Suchi Hafizullah, May 6, 2023
-Backend - Qtasnim Test - Adam Suchi Hafizullah
+# Backend - Qtasnim Test - Adam Suchi Hafizullah
 
 Stack: Node.Js, TypeScript, Sequelize, Zod, Postgree, Docker
 
