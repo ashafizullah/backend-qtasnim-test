@@ -9,52 +9,64 @@ import { Op } from 'sequelize';
 import TransactionModel from '../models/transaction.model';
 import ProductModel from '../models/product.model';
 import ProductTypeModel from '../models/productType.model';
+import { sequelize } from '../config/db';
 
 export const createTransaction = async (req: Request<object, object, CreateTransactionInput>, res: Response) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { buyerName, productId, amountSold, transactionDate } = req.body;
 
-    const product: any = await ProductModel.findByPk(productId);
+    const product: any = await ProductModel.findByPk(productId, { transaction });
 
     if (!product) {
+      await transaction.rollback();
       return res.status(404).json({
         status: 'failed',
         message: 'Product not found',
       });
     }
 
+    if (product.stock < amountSold) {
+      await transaction.rollback();
+      return res.status(400).json({
+        status: 'failed',
+        message: 'Stock is not enough',
+      });
+    }
+
     const totalPrice = product.price * amountSold;
+    const updateStock = product.stock - amountSold;
 
-		if(product.stock < amountSold) {
-			return res.status(400).json({
-				status: 'failed',
-				message: 'Stock is not enough',
-			});
-		}
+    await Promise.all([
+      ProductModel.update(
+        { stock: updateStock },
+        {
+          where: {
+            id: productId,
+          },
+          transaction,
+        },
+      ),
+      TransactionModel.create(
+        {
+          buyerName,
+          productId,
+          amountSold,
+          totalPrice,
+          transactionDate,
+        },
+        { transaction },
+      ),
+    ]);
 
-    const transaction = await TransactionModel.create({
-      buyerName,
-      productId,
-      amountSold,
-      totalPrice,
-      transactionDate,
-    });
-
-		const updateStock = product.stock - amountSold;
-		await ProductModel.update(
-			{ stock: updateStock },
-			{
-				where: {
-					id: productId,
-				},
-			},
-		);
+    await transaction.commit();
 
     res.status(201).json({
       status: 'success',
-      data: transaction,
     });
   } catch (error: any) {
+    await transaction.rollback();
     res.status(500).json({
       status: 'failed',
       message: error.message,
@@ -62,33 +74,41 @@ export const createTransaction = async (req: Request<object, object, CreateTrans
   }
 };
 
-export const updateTransaction = async (
-  req: Request<UpdateTransactionInput['params'], object, UpdateTransactionInput['body']>,
-  res: Response,
-) => {
-  try {
-		const payload: any = {
-			...req.body,
-		}
+export const updateTransaction = async ( req: Request<UpdateTransactionInput['params'], object, UpdateTransactionInput['body']>, res: Response) => {
+  const t = await sequelize.transaction();
 
-		const oldTransaction: any = await TransactionModel.findByPk(req.params.transactionId);
-		const product: any = await ProductModel.findByPk(payload.productId);
-		if (!product) {
+  try {
+    const payload: any = {
+      ...req.body,
+    };
+
+    const oldTransaction: any = await TransactionModel.findByPk(req.params.transactionId, {
+      transaction: t,
+    });
+    const product: any = await ProductModel.findByPk(payload.productId, {
+      transaction: t,
+    });
+
+    if (!product) {
+      await t.rollback();
+
       return res.status(404).json({
         status: 'failed',
         message: 'Product not found',
       });
     }
-		
-		if(product.stock + oldTransaction.amountSold < payload.amountSold) {
-			return res.status(400).json({
-				status: 'failed',
-				message: 'Stock is not enough',
-			});
-		}
+
+    if (product.stock + oldTransaction.amountSold < payload.amountSold) {
+      await t.rollback();
+
+      return res.status(400).json({
+        status: 'failed',
+        message: 'Stock is not enough',
+      });
+    }
 
     const totalPrice = product.price * payload.amountSold;
-		payload.totalPrice = totalPrice;
+    payload.totalPrice = totalPrice;
 
     const result = await TransactionModel.update(
       { ...payload, updatedAt: Date.now() },
@@ -96,33 +116,43 @@ export const updateTransaction = async (
         where: {
           id: req.params.transactionId,
         },
+        transaction: t,
       },
     );
 
     if (result[0] === 0) {
+      await t.rollback();
+
       return res.status(404).json({
         status: 'failed',
         message: 'Transaction not found',
       });
     }
 
-		const updateStock = product.stock + oldTransaction.amountSold - payload.amountSold;
-		await ProductModel.update(
-			{ stock: updateStock },
-			{
-				where: {
-					id: payload.productId,
-				},
-			},
-		);
+    const updateStock = product.stock + oldTransaction.amountSold - payload.amountSold;
+    await ProductModel.update(
+      { stock: updateStock },
+      {
+        where: {
+          id: payload.productId,
+        },
+        transaction: t,
+      },
+    );
 
-    const transaction = await TransactionModel.findByPk(req.params.transactionId);
+    const transaction = await TransactionModel.findByPk(req.params.transactionId, {
+      transaction: t,
+    });
+
+    await t.commit();
 
     res.status(200).json({
       status: 'success',
       data: transaction,
     });
   } catch (error: any) {
+    await t.rollback();
+
     res.status(500).json({
       status: 'failed',
       message: error.message,
@@ -262,39 +292,56 @@ export const findAllTransaction = async (req: Request<object, object, object, Fi
 };
 
 export const deleteTransaction = async (req: Request<ParamsInput>, res: Response) => {
+  const transaction = await sequelize.transaction();
+
   try {
-		const transaction: any = await TransactionModel.findByPk(req.params.transactionId);
+    const transactionRecord: any = await TransactionModel.findByPk(req.params.transactionId, { transaction });
 
-		if(!transaction) {
-			return res.status(404).json({
-				status: 'failed',
-				message: 'Transaction not found',
-			});
-		}
+    if (!transactionRecord) {
+      await transaction.rollback();
+      return res.status(404).json({
+        status: 'failed',
+        message: 'Transaction not found',
+      });
+    }
 
-   await TransactionModel.destroy({
-      where: { id: req.params.transactionId },
-      force: true,
-    });
+    const productRecord: any = await ProductModel.findByPk(transactionRecord.productId, { transaction });
 
-		const product: any= await ProductModel.findByPk(transaction.productId);
+    if (!productRecord) {
+      await transaction.rollback();
+      return res.status(404).json({
+        status: 'failed',
+        message: 'Product not found',
+      });
+    }
 
-		const updateStock = product.stock + transaction.amountSold;
+    const updateStock = productRecord.stock + transactionRecord.amountSold;
 
-		await ProductModel.update(
-			{ stock: updateStock },
-			{
-				where: {
-					id: transaction.productId,
-				},
-			},
-		);
+    await Promise.all([
+      TransactionModel.destroy({
+        where: { id: req.params.transactionId },
+        force: true,
+        transaction,
+      }),
+      ProductModel.update(
+        { stock: updateStock },
+        {
+          where: {
+            id: transactionRecord.productId,
+          },
+          transaction,
+        },
+      ),
+    ]);
+
+    await transaction.commit();
 
     res.status(204).json({
       status: 'success',
       message: 'Transaction deleted',
     });
   } catch (error: any) {
+    await transaction.rollback();
     res.status(500).json({
       status: 'failed',
       message: error.message,
